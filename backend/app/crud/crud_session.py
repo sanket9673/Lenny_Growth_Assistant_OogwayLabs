@@ -61,3 +61,35 @@ async def add_message(
     await db.commit()
     await db.refresh(message)
     return message
+
+
+async def list_sessions(db: AsyncSession, limit: int = 100) -> List[Session]:
+    """Retrieve all sessions ordered by updated_at descending."""
+    stmt = select(Session).order_by(Session.updated_at.desc()).limit(limit)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def delete_session(db: AsyncSession, session_id: UUID) -> bool:
+    """Delete a session by UUID."""
+    stmt = select(Session).where(Session.id == session_id)
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
+    if session:
+        await db.delete(session)
+        await db.commit()
+        return True
+    return False
+
+
+async def update_session_title(db: AsyncSession, session_id: UUID, title: str) -> Optional[Session]:
+    """Update a session's title."""
+    stmt = select(Session).where(Session.id == session_id)
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
+    if session:
+        session.title = title
+        await db.commit()
+        await db.refresh(session)
+        return session
+    return None

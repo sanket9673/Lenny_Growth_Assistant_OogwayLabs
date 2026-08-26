@@ -43,6 +43,7 @@ class Session(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    title: Mapped[Optional[str]] = mapped_column(String(256), nullable=True, default="New Session")
     provider: Mapped[str] = mapped_column(String(64), nullable=False, default="anthropic")
     model: Mapped[str] = mapped_column(String(64), nullable=False, default="claude-3-5-sonnet")
     created_at: Mapped[datetime] = mapped_column(

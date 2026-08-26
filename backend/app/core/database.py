@@ -36,6 +36,12 @@ async def init_db() -> None:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
         await conn.run_sync(Base.metadata.create_all)
         
+        # Ensure title column exists
+        try:
+            await conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title VARCHAR(256) DEFAULT 'New Session';"))
+        except Exception as e:
+            logger.warning(f"Could not add title column: {e}")
+
         # HNSW Index creation for cosine distance
         await conn.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_transcript_chunks_embedding_hnsw 

@@ -1,3 +1,4 @@
+from fastapi import APIRouter
 from app.api.v1.endpoints import health, ingest, search, models, sessions, chat, artifacts
 
 api_router = APIRouter()

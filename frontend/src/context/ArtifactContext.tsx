@@ -14,6 +14,7 @@ interface ArtifactContextType {
   activeArtifact: ArtifactData | null;
   artifactHistory: ArtifactData[];
   isOpen: boolean;
+  setIsOpen: (val: boolean) => void;
   openArtifact: (artifact: ArtifactData) => void;
   closeArtifact: () => void;
   selectVersion: (version: number) => void;
@@ -88,6 +89,7 @@ export const ArtifactProvider: React.FC<{ children: ReactNode }> = ({ children }
         activeArtifact,
         artifactHistory,
         isOpen,
+        setIsOpen,
         openArtifact,
         closeArtifact,
         selectVersion,
