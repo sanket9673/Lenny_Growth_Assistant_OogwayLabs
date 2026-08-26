@@ -1,5 +1,5 @@
 from typing import List
-from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.schema import TranscriptChunk
 from app.ingestion.chunker import ChunkPayload
@@ -11,7 +11,7 @@ class VectorStoreManager:
         self.session = session
         self.embedder = EmbeddingEngine()
 
-    async def upsert_chunks(self, chunks: List[ChunkPayload], batch_size: int = 50) -> int:
+    async def upsert_chunks(self, chunks: List[ChunkPayload], batch_size: int = 100) -> int:
         if not chunks:
             return 0
 
@@ -21,39 +21,37 @@ class VectorStoreManager:
             contents = [c.content for c in batch]
             embeddings = self.embedder.embed_texts(contents)
 
+            values_to_insert = []
             for chunk_payload, embedding in zip(batch, embeddings):
-                # Check for existing chunk duplicate based on content hash or title+index
-                stmt = select(TranscriptChunk).where(
-                    (TranscriptChunk.transcript_title == chunk_payload.transcript_title) &
-                    (TranscriptChunk.chunk_index == chunk_payload.chunk_index)
-                )
-                result = await self.session.execute(stmt)
-                existing = result.scalar_one_or_none()
+                values_to_insert.append({
+                    "transcript_title": chunk_payload.transcript_title,
+                    "guest_name": chunk_payload.guest_name,
+                    "publication_date": chunk_payload.publication_date,
+                    "chunk_index": chunk_payload.chunk_index,
+                    "content": chunk_payload.content,
+                    "speaker": chunk_payload.speaker,
+                    "timestamp_start": chunk_payload.timestamp_start,
+                    "content_hash": chunk_payload.content_hash,
+                    "embedding": embedding
+                })
 
-                if existing:
-                    existing.content = chunk_payload.content
-                    existing.speaker = chunk_payload.speaker
-                    existing.timestamp_start = chunk_payload.timestamp_start
-                    existing.content_hash = chunk_payload.content_hash
-                    existing.embedding = embedding
-                    existing.publication_date = chunk_payload.publication_date
-                else:
-                    db_chunk = TranscriptChunk(
-                        transcript_title=chunk_payload.transcript_title,
-                        guest_name=chunk_payload.guest_name,
-                        publication_date=chunk_payload.publication_date,
-                        chunk_index=chunk_payload.chunk_index,
-                        content=chunk_payload.content,
-                        speaker=chunk_payload.speaker,
-                        timestamp_start=chunk_payload.timestamp_start,
-                        content_hash=chunk_payload.content_hash,
-                        embedding=embedding
-                    )
-                    self.session.add(db_chunk)
-                inserted_count += 1
-
-            await self.session.flush()
+            stmt = insert(TranscriptChunk).values(values_to_insert)
+            # Perform atomic bulk upsert using PostgreSQL ON CONFLICT clause
+            upsert_stmt = stmt.on_conflict_do_update(
+                index_elements=["transcript_title", "chunk_index"],
+                set_={
+                    "content": stmt.excluded.content,
+                    "guest_name": stmt.excluded.guest_name,
+                    "publication_date": stmt.excluded.publication_date,
+                    "speaker": stmt.excluded.speaker,
+                    "timestamp_start": stmt.excluded.timestamp_start,
+                    "content_hash": stmt.excluded.content_hash,
+                    "embedding": stmt.excluded.embedding,
+                }
+            )
+            await self.session.execute(upsert_stmt)
+            inserted_count += len(batch)
 
         await self.session.commit()
-        logger.info(f"Successfully processed and stored {inserted_count} chunks.")
+        logger.info(f"Successfully batch-upserted {inserted_count} chunks.")
         return inserted_count
