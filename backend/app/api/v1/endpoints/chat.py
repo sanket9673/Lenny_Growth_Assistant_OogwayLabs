@@ -1,6 +1,7 @@
 import json
 import asyncio
-from typing import AsyncGenerator
+import logging
+from typing import List, Optional, Dict, Any, AsyncGenerator
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -14,8 +15,16 @@ from app.rag.prompt import build_grounded_system_prompt, REFUSAL_RESPONSE
 from app.rag.llm_factory import LLMFactory
 from app.rag.budget_manager import ContextBudgetManager
 
-router = APIRouter()
+from app.agents.router import SkillRouter
+from app.skills.ship30.pipeline import Ship30SkillEngine
 
+router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+# ==========================================
+# FEATURE 3: RAG SESSION SCHEMAS & ENDPOINT
+# ==========================================
 
 class ChatStreamRequest(BaseModel):
     session_id: UUID
@@ -98,5 +107,111 @@ async def chat_stream(
 
         # Stream Done Event with message ID
         yield format_sse("done", {"message_id": str(assistant_msg.id)})
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# ==========================================
+# FEATURE 4: SHIP 30 CONTENT ENGINE SCHEMAS & ENDPOINT
+# ==========================================
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    skill_override: Optional[str] = None
+    chat_history: Optional[List[ChatMessage]] = []
+
+
+# Dummy LLM Factory & Retriever dependencies for engine execution context
+class DummyLLMFactory:
+    async def generate(self, system_prompt: str, prompt: str, temperature: float = 0.3, response_format: str = "text") -> str:
+        if response_format == "json":
+            if "selected_skill" in prompt:
+                return json.dumps({"selected_skill": "ship30", "confidence": 0.95, "reasoning": "Essay requested"})
+            return json.dumps({
+                "topic": "Growth Leadership",
+                "target_audience": "Growth PMs",
+                "core_thesis": "Execution drives retention.",
+                "hook_attention": "Retention is the ultimate metric for growth.",
+                "hook_agitate": "Most teams optimize top of funnel and bleed users.",
+                "hook_articulate": "The problem is lack of activation loops.",
+                "hook_action": "Build systematic activation cadences.",
+                "sections": [
+                    {"section_index": i, "title": f"Section {i}: Strategy Framework", "key_takeaway": "Drive retention", "transcript_citations": ["Lenny Rachitsky"], "target_word_count": 300}
+                    for i in range(1, 5)
+                ],
+                "total_target_words": 1250
+            })
+        
+        return (
+            "Building high-performing growth teams requires relentless prioritization and rigorous execution. "
+            "According to [Lenny Rachitsky, Episode 42], product market fit must precede any acquisition spend. "
+            "First, focus on retention curves. If your retention curve does not flatten, no acquisition budget will save you. "
+            "Second, establish clear activation milestones. Ensure users experience the core value within their first session.\n\n"
+            "Execution requires continuous alignment across design, engineering, and data science. "
+            "Create weekly growth reviews. Measure output metrics against input leverage points.\n\n"
+            "**Key Takeaway: Retention compounds acquisition efficiency over time.**"
+        )
+
+
+class DummyRetriever:
+    async def retrieve(self, query: str, top_k: int = 4) -> List[Dict[str, Any]]:
+        return [
+            {
+                "guest_name": "Elena Verna",
+                "episode": "Product-Led Growth & B2B Retention",
+                "content": "PLG requires virality and self-serve onboarding. Retention is compounding."
+            },
+            {
+                "guest_name": "Casey Winters",
+                "episode": "Scaling Retention Loops",
+                "content": "SEO and Referral loops are the primary growth engines that sustain long-term scale."
+            }
+        ]
+
+
+def get_llm_factory():
+    return DummyLLMFactory()
+
+
+def get_retriever():
+    return DummyRetriever()
+
+
+@router.post("/chat/stream")
+async def stream_chat(
+    request: ChatRequest,
+    llm_factory: Any = Depends(get_llm_factory),
+    retriever: Any = Depends(get_retriever)
+):
+    """
+    Streaming SSE endpoint integrating intent routing and Ship30 multi-pass generation.
+    """
+    skill_router = SkillRouter(llm_factory=llm_factory)
+    route_decision = await skill_router.route(request.message, skill_override=request.skill_override)
+
+    async def event_generator():
+        try:
+            context_chunks = await retriever.retrieve(request.message)
+
+            if route_decision.selected_skill == "ship30":
+                engine = Ship30SkillEngine(llm_factory=llm_factory)
+                async for event in engine.run_stream(request.message, context_chunks):
+                    yield f"event: {event['event']}\ndata: {json.dumps(event['data'])}\n\n"
+            else:
+                yield f"event: skill_start\ndata: {json.dumps({'skill': 'standard_qa'})}\n\n"
+                answer = await llm_factory.generate(
+                    system_prompt="You are Lenny's Growth Assistant.",
+                    prompt=request.message
+                )
+                yield f"event: token\ndata: {json.dumps({'text': answer})}\n\n"
+                yield f"event: done\ndata: {json.dumps({'status': 'complete'})}\n\n"
+        except Exception as e:
+            logger.error(f"Error in SSE stream: {e}")
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
