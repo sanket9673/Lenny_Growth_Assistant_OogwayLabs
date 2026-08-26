@@ -77,25 +77,4 @@ class Message(Base):
     artifacts: Mapped[list["Artifact"]] = relationship("Artifact", back_populates="message")
 
 
-class Artifact(Base):
-    __tablename__ = "artifacts"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
-    )
-    message_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
-    )
-    title: Mapped[str] = mapped_column(String(256), nullable=False)
-    artifact_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-
-    session: Mapped["Session"] = relationship("Session", back_populates="artifacts")
-    message: Mapped[Optional["Message"]] = relationship("Message", back_populates="artifacts")
+from app.models.artifact import Artifact

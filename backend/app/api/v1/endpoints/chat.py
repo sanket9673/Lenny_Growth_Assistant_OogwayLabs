@@ -68,6 +68,12 @@ async def chat_stream(
         yield format_sse("citation", {"citations": citations})
 
         accumulated_tokens = []
+        
+        # Generate assistant message ID early so parser can reference it
+        import uuid
+        assistant_message_id = uuid.uuid4()
+        from app.artifacts.parser import ArtifactStreamParser
+        parser = ArtifactStreamParser(session_id=str(payload.session_id), message_id=str(assistant_message_id))
 
         if not has_context:
             # Empty context fallback
@@ -89,24 +95,72 @@ async def chat_stream(
             # Initialize LLM & Stream
             llm = LLMFactory.get_llm(provider=payload.provider, model=payload.model)
             async for token in llm.astream(formatted_messages):
-                yield format_sse("token", {"token": token})
-                accumulated_tokens.append(token)
+                async for item in parser.parse_chunk(token):
+                    if item["type"] == "text":
+                        yield format_sse("token", {"token": item["content"]})
+                        accumulated_tokens.append(item["content"])
+                    elif item["type"] == "sse":
+                        yield format_sse(item["event"], item["data"])
+                        if item["event"] == "artifact_complete":
+                            from app.core.database import AsyncSessionLocal
+                            from app.crud.crud_artifact import crud_artifact
+                            from app.schemas.artifact import ArtifactCreate
+                            from app.models.artifact import ArtifactType
+                            async with AsyncSessionLocal() as db_stream:
+                                await crud_artifact.create_or_version(
+                                    db_stream,
+                                    ArtifactCreate(
+                                        session_id=str(payload.session_id),
+                                        message_id=str(assistant_message_id),
+                                        artifact_key=item["data"]["artifact_key"],
+                                        title=item["data"]["title"],
+                                        type=ArtifactType(item["data"]["type"]),
+                                        content=item["data"]["content"]
+                                    )
+                                )
+
+            async for item in parser.finalize():
+                if item["type"] == "text":
+                    yield format_sse("token", {"token": item["content"]})
+                    accumulated_tokens.append(item["content"])
+                elif item["type"] == "sse":
+                    yield format_sse(item["event"], item["data"])
+                    if item["event"] == "artifact_complete":
+                        from app.core.database import AsyncSessionLocal
+                        from app.crud.crud_artifact import crud_artifact
+                        from app.schemas.artifact import ArtifactCreate
+                        from app.models.artifact import ArtifactType
+                        async with AsyncSessionLocal() as db_stream:
+                            await crud_artifact.create_or_version(
+                                db_stream,
+                                ArtifactCreate(
+                                    session_id=str(payload.session_id),
+                                    message_id=str(assistant_message_id),
+                                    artifact_key=item["data"]["artifact_key"],
+                                    title=item["data"]["title"],
+                                    type=ArtifactType(item["data"]["type"]),
+                                    content=item["data"]["content"]
+                                )
+                            )
 
         full_assistant_response = "".join(accumulated_tokens)
 
         # 5. DB Persistence of Assistant Response using a fresh connection/session inside generator
         from app.core.database import AsyncSessionLocal
         async with AsyncSessionLocal() as db_stream:
-            assistant_msg = await crud_session.add_message(
-                db_stream,
+            from app.db.models import Message
+            assistant_msg = Message(
+                id=assistant_message_id,
                 session_id=payload.session_id,
                 role="assistant",
                 content=full_assistant_response,
                 citations=citations
             )
+            db_stream.add(assistant_msg)
+            await db_stream.commit()
 
         # Stream Done Event with message ID
-        yield format_sse("done", {"message_id": str(assistant_msg.id)})
+        yield format_sse("done", {"message_id": str(assistant_message_id)})
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
