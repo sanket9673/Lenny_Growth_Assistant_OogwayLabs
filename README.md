@@ -1,41 +1,76 @@
-# Lenny Growth Assistant 🚀
+# The Lenny Growth Assistant
 
-An agentic RAG system built on top of Lenny's Podcast transcripts for product strategy, growth frameworks, and career advice.
+An enterprise-ready AI search assistant and artifact generation engine powered by Lenny Rachitsky's podcast transcript corpus.
 
-## 🏗️ Tech Stack
-- **Backend:** Python 3.11+, FastAPI, Pydantic v2, AsyncPG, SQLAlchemy 2.0
-- **Vector DB:** PostgreSQL 16 + `pgvector` (HNSW Indexing)
-- **Embeddings:** FastEmbed (`BAAI/bge-small-en-v1.5`, 384 dimensions)
-- **Frontend:** Vite, React, TypeScript, Tailwind CSS
+## Quick Start (One-Command Setup)
 
-## ⚡ Quick Start
+Run the automated bootstrapping script:
 
-### 1. Infrastructure Setup
-Start PostgreSQL with pgvector:
 ```bash
-docker compose up -d
+chmod +x scripts/run.sh
+./scripts/run.sh
 ```
 
-### 2. Backend Setup
+Or run via make:
+
 ```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+make setup
+make start
 ```
 
-### 3. Run Ingestion Pipeline (CLI)
-Index all markdown transcripts located in `data/transcripts/`:
+Access the frontend application at [http://localhost:3000](http://localhost:3000) and API documentation at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+### Prerequisites
+- Docker & Docker Compose (v2.0+)
+- Python 3.11+ (for optional local non-Docker development)
+- Ollama (Optional for zero-cost local LLM execution)
+
+### Environment & Provider Configuration
+Copy `.env.example` to `.env` and configure optional cloud credentials:
+
 ```bash
-python -m app.ingestion.cli
+# Cloud Providers (Optional - System defaults to local Ollama if missing)
+ANTHROPIC_API_KEY=sk-ant-xxx
+GROQ_API_KEY=gsk_xxx
+
+# Database Configuration
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=lenny_growth
+
+# Ollama Endpoint
+OLLAMA_BASE_URL=http://host.docker.internal:11434
 ```
 
-### 4. Run API Server & Test Suite
-```bash
-# Run tests
-pytest -v
+### Running Local LLMs with Ollama
+1. Install Ollama: [ollama.ai](https://ollama.ai)
+2. Pull the default model:
+   ```bash
+   ollama pull llama3.2
+   ```
+3. Start the Ollama server:
+   ```bash
+   ollama serve
+   ```
 
-# Start FastAPI server
-uvicorn app.main:app --reload --port 8000
+### Testing & Operational Commands
+Execute the test suite across the backend container:
+```bash
+make test
 ```
-Access interactive API docs at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+Inspect container streaming logs:
+```bash
+make logs
+```
+
+Clean database and volume mounts:
+```bash
+make clean
+```
+
+### Troubleshooting & FAQ
+- **Q: Vector retrieval returns no results or throws refusal errors.**
+  - **Solution:** Ensure the vector embedding index has been populated by executing `make ingest`.
+- **Q: Local Ollama connection refused inside Docker.**
+  - **Solution:** Verify Ollama is bound to host IP `0.0.0.0` or `127.0.0.1` and `OLLAMA_BASE_URL` is set to `http://host.docker.internal:11434`.
